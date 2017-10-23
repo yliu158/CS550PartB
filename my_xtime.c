@@ -1,36 +1,65 @@
-#include <linux/export.h>
-#include <linux/linkage.h>
-#include <linux/time.h>
-#include <linux/printk.h>
-#include <linux/slab.h>
+#include <linux/init.h>           // Macros used to mark up functions e.g. __init __exit
+#include <linux/module.h>         // Core header for loading LKMs into the kernel
+#include <linux/device.h>         // Header to support the kernel Driver Model
+#include <linux/kernel.h>         // Contains types, macros, functions for the kernel
+#include <linux/fs.h>             // Header for the Linux file system support
 #include <asm/uaccess.h>
 
-asmlinkage int sys_my_xtime(struct timespec* current_time) {
-//	printk(KERN_ALERT "SYS_MY_XTIME()\n");
-	if (likely(current_time != NULL) ) {
-		int size = sizeof(*current_time);
-		if (access_ok(VERIFY_WRITE, current_time, size)) {
-			
-			struct timespec cur_kernel_time = current_kernel_time();
-			int cp;
-			int sizeCKT = sizeof(cur_kernel_time);
-			printk(KERN_ALERT "set:\n");
-			cp = copy_to_user(current_time, &cur_kernel_time, sizeCKT);
-			
-			if (cp > 0) {
-				return cp;
-			}
-			printk(KERN_ALERT "tv_sec:%ld\n", current_time->tv_sec);
-			printk(KERN_ALERT "tv_nsec:%ld\n", current_time->tv_nsec);
-			printk(KERN_ALERT "return\n");
-			return 0;
-		} else {
-			return EFAULT;
-		}
-	}
+MODULE_LICENSE("GPL");            ///< The license type -- this affects available functionality
+MODULE_AUTHOR("Yang Liu");    ///< The author -- visible when you use modinfo
 
-	return 0;
+static struct file_operations my_fops = {
+  .owner = THIS_MODULE,
+  .open = my_open,
+  .release = my_close,
+  // .read = my_read,
+};
 
+static struct miscdevice my_misc_device = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = "my device",
+  .fops = &my_fops
+};
+
+
+static int __init my_module_init() {
+  misc_register(&my_misc_device);
 }
 
-EXPORT_SYMBOL(sys_my_xtime);
+static void __exit my_exit(void) {
+  misc_deregister(&my_misc_device);
+}
+
+static ssize_t my_read(
+  struct file *file,
+  char __user * out,
+  size_t size,
+  loff_t * off) {
+
+  if (access_ok(VERIFY_READ, my_misc_device, size)){
+    struct timespec current_time = current_kernel_time();
+    char* buf = (char*)kmalloc(size, GFP_KERNEL);
+    snprintf(buf, size, “Hello World\n”);
+
+    int cp = copy_to_user(out, buf, strlen(buf)+1);
+    if (cp > 0) {
+      return cp;
+    }
+    printk(KERN_ALERT "current_kernel_time:%ld\n", current_time->tv_sec);
+    free(buf);
+    return 0;
+  } else {
+    return EFAULT;
+  }
+}
+
+static int my_open(struct miscdevice *, struct file *) {
+  printk(KERN_ALERT "Char Device has been opened.\n");
+}
+
+static int my_close(struct inode *inodep, struct file *filep) {
+  printk(KERN_ALERT "Char Device successfully closed.\n");
+}
+
+module_init(__init);
+module_exit(__exit);
